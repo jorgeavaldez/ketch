@@ -2,6 +2,7 @@ package config
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 
@@ -75,16 +76,21 @@ func LoadFile() Config {
 // environment variables (precedence: env > file > default), plus the
 // provenance of every env override. On invalid env values it returns a
 // best-effort config (valid vars applied, invalid ones skipped) alongside a
-// descriptive error; callers decide when to surface it.
+// descriptive error; callers decide when to surface it. Custom HTTP headers
+// are validated after the environment overlay.
 func Load() (LoadResult, error) {
 	cfg := LoadFile()
 	overrides, err := applyEnv(&cfg)
+	err = errors.Join(err, ValidateHTTPHeaders(&cfg))
 	return LoadResult{Config: cfg, Overrides: overrides}, err
 }
 
 // Save writes the config to disk, creating the directory if needed.
 func Save(cfg Config) error {
 	cfg = cfg.WithSettings(ProviderSettings())
+	if err := ValidateHTTPHeaders(&cfg); err != nil {
+		return err
+	}
 	path, err := Path()
 	if err != nil {
 		return err

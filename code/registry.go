@@ -3,10 +3,10 @@ package code
 import (
 	"context"
 	"errors"
-	"net/http"
 	"slices"
 
 	"github.com/1broseidon/ketch/health"
+	"github.com/1broseidon/ketch/httpx"
 	config "github.com/1broseidon/ketch/internal/configbase"
 )
 
@@ -21,7 +21,7 @@ type Provider struct {
 	Usable   func(*config.Config) bool
 	Settings []config.Setting
 	New      func(*config.Config) (Searcher, error)
-	Probe    func(context.Context, *http.Client, *config.Config) (health.Status, string)
+	Probe    func(context.Context, httpx.Doer, *config.Config) (health.Status, string)
 
 	// Qualifiers is set when the backend applies qualifiers written into the
 	// query (repo:, lang:, path:). Without it the query is matched as literal

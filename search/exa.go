@@ -19,17 +19,14 @@ import (
 
 type EXA struct {
 	keys   keyPool
-	client *http.Client
+	client httpx.Doer
 }
 
 func NewEXA(apiKey *string) *EXA {
-	if apiKey == nil {
-		return newEXAWithKeys(nil)
+	var keys []string
+	if apiKey != nil {
+		keys = []string{*apiKey}
 	}
-	return newEXAWithKeys([]string{*apiKey})
-}
-
-func newEXAWithKeys(keys []string) *EXA {
 	return &EXA{keys: newKeyPool(keys), client: httpx.Default()}
 }
 
@@ -284,7 +281,7 @@ func ExaEndpoint(apiKey string) string {
 }
 
 // ProbeExa checks the provider using a caller-supplied client and endpoint.
-func ProbeExa(ctx context.Context, client *http.Client, endpoint string, keyed bool) (health.Status, string) {
+func ProbeExa(ctx context.Context, client httpx.Doer, endpoint string, keyed bool) (health.Status, string) {
 	body := strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, body)
 	if err != nil {
@@ -335,8 +332,11 @@ func exaProvider() Provider {
 		ID:       "exa",
 		Name:     "Exa",
 		Usable:   func(*config.Config) bool { return true },
-		New:      func(c *config.Config) (Searcher, error) { return newEXAWithKeys(c.ExaKeys()), nil },
-		Probe: func(ctx context.Context, client *http.Client, c *config.Config) (health.Status, string) {
+		New: func(c *config.Config) (Searcher, error) {
+			client := httpx.WithHeaders(httpx.Default(), c.EffectiveHTTPHeaders("exa"))
+			return &EXA{keys: newKeyPool(c.ExaKeys()), client: client}, nil
+		},
+		Probe: func(ctx context.Context, client httpx.Doer, c *config.Config) (health.Status, string) {
 			return health.ProbeKeyPool(c.ExaKeys(), func(key string) (health.Status, string) { return ProbeExa(ctx, client, ExaEndpoint(key), key != "") })
 		},
 	}

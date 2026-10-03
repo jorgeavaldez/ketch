@@ -78,6 +78,51 @@ func TestBuildConfigInfoReportsEffectiveKeyCountsWithoutValues(t *testing.T) {
 	}
 }
 
+func TestApplyConfigSetHeadersValidationExitCode(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		key   string
+		value string
+	}{
+		{"malformed global JSON", "http_headers", `{`},
+		{"malformed provider JSON", "provider_http_headers", `{`},
+		{"prohibited global header", "http_headers", `{"Host":["private-value"]}`},
+		{"prohibited provider header", "provider_http_headers", `{"ddg":{"Host":["private-value"]}}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := config.Defaults()
+			err := applyConfigSet(&cfg, tc.key, tc.value)
+			var exitErr *ExitError
+			if !errors.As(err, &exitErr) || exitErr.Code != ExitValidation {
+				t.Fatalf("error = %v, want exit %d", err, ExitValidation)
+			}
+			if strings.Contains(err.Error(), "private-value") {
+				t.Fatalf("validation error exposed a header value: %v", err)
+			}
+		})
+	}
+}
+
+func TestHeaderValuesAreRedactedInConfigDiscovery(t *testing.T) {
+	cfg := config.Defaults()
+	if err := applyConfigSet(&cfg, "http_headers", `{"X-Client":["private-header-value"]}`); err != nil {
+		t.Fatal(err)
+	}
+	if err := applyConfigSet(&cfg, "provider_http_headers", `{"ddg":{"X-Token":["private-provider-value"]}}`); err != nil {
+		t.Fatal(err)
+	}
+	info := buildConfigInfo(cfg, "/tmp/config.json")
+	data, err := json.Marshal(info)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, secret := range []string{"private-header-value", "private-provider-value"} {
+		if strings.Contains(string(data), secret) {
+			t.Fatalf("config discovery exposed a header value: %s", secret)
+		}
+	}
+}
+
 func TestRunConfigSetNeverEchoesSecrets(t *testing.T) {
 	tests := []struct {
 		key     string
@@ -97,6 +142,8 @@ func TestRunConfigSetNeverEchoesSecrets(t *testing.T) {
 		{key: "tavily_api_keys", value: `["tavily-one","tavily-two"]`, secrets: []string{"tavily-one", "tavily-two"}, want: "set tavily_api_keys (2 keys)\n"},
 		{key: "context7_api_key", value: "context7-secret", secrets: []string{"context7-secret"}, want: "set context7_api_key (1 key)\n"},
 		{key: "github_token", value: "github-secret", secrets: []string{"github-secret"}, want: "set github_token (1 token)\n"},
+		{key: "http_headers", value: `{"X-Client":["private-header-value"]}`, secrets: []string{"private-header-value"}, want: "set http_headers (values redacted)\n"},
+		{key: "provider_http_headers", value: `{"ddg":{"X-Token":["private-provider-value"]}}`, secrets: []string{"private-provider-value"}, want: "set provider_http_headers (values redacted)\n"},
 	}
 
 	for _, test := range tests {

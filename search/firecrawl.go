@@ -17,21 +17,17 @@ import (
 // Firecrawl searches the web via the Firecrawl v2 search API.
 type Firecrawl struct {
 	keys     keyPool
-	client   *http.Client
+	client   httpx.Doer
 	endpoint string // full POST URL (base + /v2/search)
 }
 
 // NewFirecrawl creates a new Firecrawl search backend against the hosted API.
 // An empty apiKey uses the keyless hosted endpoint.
 func NewFirecrawl(apiKey string) *Firecrawl {
-	return newFirecrawlWithKeys([]string{apiKey}, config.DefaultFirecrawlURL)
-}
-
-func newFirecrawlWithKeys(keys []string, baseURL string) *Firecrawl {
 	return &Firecrawl{
-		keys:     newKeyPool(keys),
+		keys:     newKeyPool([]string{apiKey}),
 		client:   httpx.Default(),
-		endpoint: config.FirecrawlSearchURL(baseURL),
+		endpoint: config.FirecrawlSearchURL(config.DefaultFirecrawlURL),
 	}
 }
 
@@ -165,7 +161,7 @@ const firecrawlSearchBody = `{"query":"ketch","limit":1,"integration":"_ketch"}`
 const firecrawlLivenessBody = `{}`
 
 // ProbeFirecrawl checks the provider using a caller-supplied client and endpoint.
-func ProbeFirecrawl(ctx context.Context, client *http.Client, endpoint, apiKey string) (health.Status, string) {
+func ProbeFirecrawl(ctx context.Context, client httpx.Doer, endpoint, apiKey string) (health.Status, string) {
 	key := strings.TrimSpace(apiKey)
 	hosted := strings.EqualFold(endpoint, config.FirecrawlSearchURL(config.DefaultFirecrawlURL))
 	body := firecrawlSearchBody
@@ -248,9 +244,10 @@ func firecrawlProvider() Provider {
 		Name:     "Firecrawl",
 		Usable:   func(*config.Config) bool { return true },
 		New: func(c *config.Config) (Searcher, error) {
-			return newFirecrawlWithKeys(c.FirecrawlKeys(), c.EffectiveFirecrawlURL()), nil
+			client := httpx.WithHeaders(httpx.Default(), c.EffectiveHTTPHeaders("firecrawl"))
+			return &Firecrawl{keys: newKeyPool(c.FirecrawlKeys()), client: client, endpoint: config.FirecrawlSearchURL(c.EffectiveFirecrawlURL())}, nil
 		},
-		Probe: func(ctx context.Context, client *http.Client, c *config.Config) (health.Status, string) {
+		Probe: func(ctx context.Context, client httpx.Doer, c *config.Config) (health.Status, string) {
 			return health.ProbeKeyPool(c.FirecrawlKeys(), func(key string) (health.Status, string) {
 				return ProbeFirecrawl(ctx, client, config.FirecrawlSearchURL(c.EffectiveFirecrawlURL()), key)
 			})

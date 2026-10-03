@@ -17,6 +17,7 @@ import (
 
 	"github.com/1broseidon/ketch/cache"
 	"github.com/1broseidon/ketch/config"
+	"github.com/1broseidon/ketch/httpx"
 	"github.com/1broseidon/ketch/search"
 )
 
@@ -26,6 +27,47 @@ func testCtx(t *testing.T) context.Context {
 }
 
 // --- searxng ---
+
+func TestBuildSpecsApplyConfiguredHeadersToProviderProbe(t *testing.T) {
+	for _, backend := range []string{"searxng", "firecrawl"} {
+		t.Run(backend, func(t *testing.T) {
+			seen := make(chan http.Header, 1)
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				seen <- r.Header.Clone()
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"results":[]}`))
+			}))
+			defer server.Close()
+
+			cfg := config.Defaults()
+			cfg.SetProvider(backend+"_url", server.URL)
+			cfg.HTTPHeaders = http.Header{"X-Global": {"global"}}
+			cfg.ProviderHTTPHeaders = map[string]http.Header{
+				"searxng":   {"CF-Access-Client-Secret": {"searxng-secret"}},
+				"firecrawl": {"CF-Access-Client-Secret": {"firecrawl-secret"}},
+			}
+			for _, check := range buildSpecs(&cfg, httpx.Default()) {
+				if check.backend != backend {
+					continue
+				}
+				status, detail := check.probe(context.Background())
+				if status != StatusOK {
+					t.Fatalf("probe = %s (%s)", status, detail)
+				}
+				select {
+				case headers := <-seen:
+					if headers.Get("X-Global") != "global" || headers.Get("CF-Access-Client-Secret") != backend+"-secret" {
+						t.Fatal("probe did not receive global and provider-scoped headers")
+					}
+				default:
+					t.Fatal("probe did not reach the configured instance")
+				}
+				return
+			}
+			t.Fatal("doctor probe not found")
+		})
+	}
+}
 
 func TestProbeSearxngOK(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

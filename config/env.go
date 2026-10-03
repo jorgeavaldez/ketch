@@ -1,8 +1,10 @@
 package config
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"sort"
 	"strconv"
@@ -67,6 +69,30 @@ func splitCommaList(v string) []string {
 
 func coreEnvSpecs() []envSpec {
 	return []envSpec{
+		{key: "http_headers", secret: true, prev: func(*Config) string { return "" }, apply: func(c *Config, v string) error {
+			var headers http.Header
+			if err := json.Unmarshal([]byte(v), &headers); err != nil || headers == nil {
+				return errors.New("must be a JSON object")
+			}
+			normalized, err := validateHeaders(headers)
+			if err != nil {
+				return err
+			}
+			c.HTTPHeaders = normalized
+			return nil
+		}},
+		{key: "provider_http_headers", secret: true, prev: func(*Config) string { return "" }, apply: func(c *Config, v string) error {
+			var headers map[string]http.Header
+			if err := json.Unmarshal([]byte(v), &headers); err != nil || headers == nil {
+				return errors.New("must be a JSON object")
+			}
+			normalized, err := validateProviderHeaders(headers)
+			if err != nil {
+				return err
+			}
+			c.ProviderHTTPHeaders = normalized
+			return nil
+		}},
 		stringSpec("backend", func(c *Config) *string { return &c.Backend }),
 		{
 			key:  "limit",
@@ -181,16 +207,15 @@ func secretEnvVars() map[string]bool {
 	return vars
 }
 
-// ScrubbedEnviron returns os.Environ() with every KETCH_* secret variable
-// (API keys, tokens) removed. Use it for spawned subprocesses (headless
-// browser, external PDF converter) so injected credentials don't leak.
+// ScrubbedEnviron returns os.Environ() with sensitive KETCH_* variables
+// (credentials and custom HTTP headers) removed before subprocesses inherit them.
 func ScrubbedEnviron() []string {
 	secrets := secretEnvVars()
 	env := os.Environ()
 	out := make([]string, 0, len(env))
 	for _, kv := range env {
 		name, _, _ := strings.Cut(kv, "=")
-		if secrets[name] {
+		if secrets[strings.ToUpper(name)] {
 			continue
 		}
 		out = append(out, kv)

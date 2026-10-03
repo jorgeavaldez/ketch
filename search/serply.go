@@ -29,16 +29,12 @@ const serplyMaxNum = 10
 // results without any scraping maintenance.
 type Serply struct {
 	keys   keyPool
-	client *http.Client
+	client httpx.Doer
 }
 
 // NewSerply creates a new Serply search backend.
 func NewSerply(apiKey string) *Serply {
-	return newSerplyWithKeys([]string{apiKey})
-}
-
-func newSerplyWithKeys(keys []string) *Serply {
-	return &Serply{keys: newKeyPool(keys), client: httpx.Default()}
+	return &Serply{keys: newKeyPool([]string{apiKey}), client: httpx.Default()}
 }
 
 type serplyResponse struct {
@@ -150,7 +146,7 @@ func serplyStatusError(resp *http.Response, keyLabel string) error {
 }
 
 // ProbeSerply checks the provider using a caller-supplied client and endpoint.
-func ProbeSerply(ctx context.Context, client *http.Client, endpoint, apiKey string) (health.Status, string) {
+func ProbeSerply(ctx context.Context, client httpx.Doer, endpoint, apiKey string) (health.Status, string) {
 	key := strings.TrimSpace(apiKey)
 	if key == "" {
 		return health.StatusNoKey, "API key not set (get a free key at https://serply.io then: ketch config set serply_api_key <key>)"
@@ -192,8 +188,11 @@ func serplyProvider() Provider {
 		Setup:           "serply: API key not set (get a free key at https://serply.io then: ketch config set serply_api_key <key>)",
 		Name:            "Serply",
 		Usable:          func(c *config.Config) bool { return len(keys.Keys(c)) > 0 },
-		New:             func(c *config.Config) (Searcher, error) { return newSerplyWithKeys(keys.Keys(c)), nil },
-		Probe: func(ctx context.Context, client *http.Client, c *config.Config) (health.Status, string) {
+		New: func(c *config.Config) (Searcher, error) {
+			client := httpx.WithHeaders(httpx.Default(), c.EffectiveHTTPHeaders("serply"))
+			return &Serply{keys: newKeyPool(keys.Keys(c)), client: client}, nil
+		},
+		Probe: func(ctx context.Context, client httpx.Doer, c *config.Config) (health.Status, string) {
 			return health.ProbeKeyPool(keys.Keys(c), func(key string) (health.Status, string) {
 				return ProbeSerply(ctx, client, serplyEndpoint, key)
 			})

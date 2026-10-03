@@ -25,7 +25,7 @@ const grepAppEndpoint = "https://mcp.grep.app"
 // (grep-style) rather than keywords.
 type GrepApp struct {
 	endpoint string
-	client   *http.Client
+	client   httpx.Doer
 }
 
 // NewGrepApp creates a new Grep MCP code search backend.
@@ -318,8 +318,11 @@ func grepappProvider() Provider {
 		ID:       "grepapp",
 		Name:     "Grep (mcp.grep.app)",
 		Usable:   func(*config.Config) bool { return true },
-		New:      func(c *config.Config) (Searcher, error) { return NewGrepApp(), nil },
-		Probe: func(ctx context.Context, client *http.Client, c *config.Config) (health.Status, string) {
+		New: func(c *config.Config) (Searcher, error) {
+			client := httpx.WithHeaders(grepAppClient, c.EffectiveHTTPHeaders("grepapp"))
+			return &GrepApp{endpoint: grepAppEndpoint, client: client}, nil
+		},
+		Probe: func(ctx context.Context, client httpx.Doer, c *config.Config) (health.Status, string) {
 			return health.ProbeMCP(ctx, client, "https://mcp.grep.app", "grep.app")
 		},
 	}

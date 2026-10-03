@@ -28,16 +28,12 @@ const (
 // Tavily searches the web via the Tavily Search API.
 type Tavily struct {
 	keys   keyPool
-	client *http.Client
+	client httpx.Doer
 }
 
 // NewTavily creates a new Tavily search backend.
 func NewTavily(apiKey string) *Tavily {
-	return newTavilyWithKeys([]string{apiKey})
-}
-
-func newTavilyWithKeys(keys []string) *Tavily {
-	return &Tavily{keys: newKeyPool(keys), client: httpx.Default()}
+	return &Tavily{keys: newKeyPool([]string{apiKey}), client: httpx.Default()}
 }
 
 type tavilyRequest struct {
@@ -167,7 +163,7 @@ func tavilyStatusError(resp *http.Response) error {
 const tavilyProbeBody = `{"query":"ketch","max_results":1,"search_depth":"basic"}`
 
 // ProbeTavily checks the provider using a caller-supplied client and endpoint.
-func ProbeTavily(ctx context.Context, client *http.Client, endpoint, apiKey string) (health.Status, string) {
+func ProbeTavily(ctx context.Context, client httpx.Doer, endpoint, apiKey string) (health.Status, string) {
 	key := strings.TrimSpace(apiKey)
 	if key == "" {
 		return health.StatusNoKey, "API key not set (get one free at https://app.tavily.com then: ketch config set tavily_api_key <key>)"
@@ -209,8 +205,11 @@ func tavilyProvider() Provider {
 		Setup:    "tavily: API key not set (get one free at https://app.tavily.com then: ketch config set tavily_api_key <key>)",
 		Name:     "Tavily",
 		Usable:   func(c *config.Config) bool { return len(c.TavilyKeys()) > 0 },
-		New:      func(c *config.Config) (Searcher, error) { return newTavilyWithKeys(c.TavilyKeys()), nil },
-		Probe: func(ctx context.Context, client *http.Client, c *config.Config) (health.Status, string) {
+		New: func(c *config.Config) (Searcher, error) {
+			client := httpx.WithHeaders(httpx.Default(), c.EffectiveHTTPHeaders("tavily"))
+			return &Tavily{keys: newKeyPool(c.TavilyKeys()), client: client}, nil
+		},
+		Probe: func(ctx context.Context, client httpx.Doer, c *config.Config) (health.Status, string) {
 			return health.ProbeKeyPool(c.TavilyKeys(), func(key string) (health.Status, string) {
 				return ProbeTavily(ctx, client, "https://api.tavily.com/search", key)
 			})

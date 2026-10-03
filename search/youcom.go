@@ -28,17 +28,13 @@ const (
 // Youcom searches the web through You.com's hosted MCP server.
 type Youcom struct {
 	keys   keyPool
-	client *http.Client
+	client httpx.Doer
 }
 
 // NewYoucom creates a new Youcom search backend; apiKey may be empty for the
 // keyless free profile.
 func NewYoucom(apiKey string) *Youcom {
-	return newYoucomWithKeys([]string{apiKey})
-}
-
-func newYoucomWithKeys(keys []string) *Youcom {
-	return &Youcom{keys: newKeyPool(keys), client: httpx.Default()}
+	return &Youcom{keys: newKeyPool([]string{apiKey}), client: httpx.Default()}
 }
 
 // YoucomEndpoint returns the MCP endpoint for the given key: the authenticated
@@ -314,7 +310,7 @@ func extractYoucomSSEPayload(raw []byte) (string, error) {
 // The probe is the same tools/list handshake health.ProbeMCP performs for
 // other hosted MCP providers; a keyed 401/403 is misconfigured, a keyless 429
 // is reachable-but-throttled (the free profile's steady state under fan-out).
-func ProbeYoucom(ctx context.Context, client *http.Client, endpoint, apiKey string) (health.Status, string) {
+func ProbeYoucom(ctx context.Context, client httpx.Doer, endpoint, apiKey string) (health.Status, string) {
 	key := strings.TrimSpace(apiKey)
 	body := strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, body)
@@ -355,8 +351,11 @@ func youcomProvider() Provider {
 		ID:       "youcom",
 		Name:     "You.com",
 		Usable:   func(*config.Config) bool { return true },
-		New:      func(c *config.Config) (Searcher, error) { return newYoucomWithKeys(keys.Keys(c)), nil },
-		Probe: func(ctx context.Context, client *http.Client, c *config.Config) (health.Status, string) {
+		New: func(c *config.Config) (Searcher, error) {
+			client := httpx.WithHeaders(httpx.Default(), c.EffectiveHTTPHeaders("youcom"))
+			return &Youcom{keys: newKeyPool(keys.Keys(c)), client: client}, nil
+		},
+		Probe: func(ctx context.Context, client httpx.Doer, c *config.Config) (health.Status, string) {
 			return health.ProbeKeyPool(keys.Keys(c), func(key string) (health.Status, string) {
 				return ProbeYoucom(ctx, client, YoucomEndpoint(key), key)
 			})

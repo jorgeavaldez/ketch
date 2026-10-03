@@ -22,7 +22,7 @@ const sourcegraphMaxEventBytes = 16 << 20
 // Sourcegraph searches code via the Sourcegraph streaming search API.
 type Sourcegraph struct {
 	baseURL string
-	client  *http.Client
+	client  httpx.Doer
 }
 
 // NewSourcegraph creates a new Sourcegraph code search backend.
@@ -206,8 +206,11 @@ func sourcegraphProvider() Provider {
 		ID:       "sourcegraph",
 		Name:     "Sourcegraph",
 		Usable:   func(*config.Config) bool { return true },
-		New:      func(c *config.Config) (Searcher, error) { return NewSourcegraph(c.String("sourcegraph_url")), nil },
-		Probe: func(ctx context.Context, client *http.Client, c *config.Config) (health.Status, string) {
+		New: func(c *config.Config) (Searcher, error) {
+			client := httpx.WithHeaders(sourcegraphClient, c.EffectiveHTTPHeaders("sourcegraph"))
+			return &Sourcegraph{baseURL: c.String("sourcegraph_url"), client: client}, nil
+		},
+		Probe: func(ctx context.Context, client httpx.Doer, c *config.Config) (health.Status, string) {
 			return health.ProbeReachable(ctx, client, c.String("sourcegraph_url"), "sourcegraph")
 		},
 	}

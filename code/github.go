@@ -28,7 +28,7 @@ const githubUnsearchable = "cannot be searched"
 // GitHub searches code via the GitHub Code Search REST API.
 type GitHub struct {
 	token   string
-	client  *http.Client
+	client  httpx.Doer
 	apiBase string
 }
 
@@ -284,7 +284,7 @@ func (g *GitHub) rateLimitError(resp *http.Response) error {
 }
 
 // ProbeGitHub checks the provider using a caller-supplied client and endpoint.
-func ProbeGitHub(ctx context.Context, client *http.Client, apiBase string, resolve func() (token, source string)) (health.Status, string) {
+func ProbeGitHub(ctx context.Context, client httpx.Doer, apiBase string, resolve func() (token, source string)) (health.Status, string) {
 	token, source := resolve()
 	if token == "" {
 		return health.StatusNoKey, "no token (ketch config set github_token <token>, $GITHUB_TOKEN, or gh auth login)"
@@ -318,10 +318,11 @@ func githubProvider() Provider {
 		Name:     "GitHub Code Search",
 		Usable:   func(c *config.Config) bool { k, _ := c.ResolveGithubToken(); return k != "" },
 		New: func(c *config.Config) (Searcher, error) {
+			client := httpx.WithHeaders(httpx.Default(), c.EffectiveHTTPHeaders("github"))
 			token, _ := c.ResolveGithubToken()
-			return NewGitHub(token), nil
+			return &GitHub{token: token, client: client, apiBase: githubAPI}, nil
 		},
-		Probe: func(ctx context.Context, client *http.Client, c *config.Config) (health.Status, string) {
+		Probe: func(ctx context.Context, client httpx.Doer, c *config.Config) (health.Status, string) {
 			return ProbeGitHub(ctx, client, githubAPI, c.ResolveGithubToken)
 		},
 	}

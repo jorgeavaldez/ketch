@@ -2,6 +2,7 @@ package search
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"sort"
@@ -102,7 +103,7 @@ func resolveCandidates(cfg *config.Config, names []string, searxngURL string) ([
 		}
 		searcher, err := NewFromConfig(cfg, name, searxngURL)
 		if err != nil {
-			if all {
+			if all && !errors.Is(err, errUnsafeSearxngOverride) {
 				continue
 			}
 			return nil, err

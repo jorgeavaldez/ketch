@@ -16,7 +16,7 @@ import (
 
 // DDG searches DuckDuckGo's HTML interface.
 type DDG struct {
-	client *http.Client
+	client httpx.Doer
 }
 
 // NewDDG creates a new DuckDuckGo search backend.
@@ -103,7 +103,7 @@ func extractDDGURL(href string) string {
 }
 
 // ProbeDDG checks the provider using a caller-supplied client and endpoint.
-func ProbeDDG(ctx context.Context, client *http.Client, endpoint string) (health.Status, string) {
+func ProbeDDG(ctx context.Context, client httpx.Doer, endpoint string) (health.Status, string) {
 	resp, err := health.Get(ctx, client, endpoint+"?q=ketch", map[string]string{"User-Agent": ddgUA})
 	if err != nil {
 		return health.StatusUnreachable, health.ErrorDetail(err)
@@ -127,8 +127,11 @@ func ddgProvider() Provider {
 		ID:       "ddg",
 		Name:     "DuckDuckGo",
 		Usable:   func(*config.Config) bool { return true },
-		New:      func(c *config.Config) (Searcher, error) { return NewDDG(), nil },
-		Probe: func(ctx context.Context, client *http.Client, c *config.Config) (health.Status, string) {
+		New: func(c *config.Config) (Searcher, error) {
+			client := httpx.WithHeaders(httpx.Default(), c.EffectiveHTTPHeaders("ddg"))
+			return &DDG{client: client}, nil
+		},
+		Probe: func(ctx context.Context, client httpx.Doer, c *config.Config) (health.Status, string) {
 			return ProbeDDG(ctx, client, "https://html.duckduckgo.com/html/")
 		},
 	}

@@ -20,7 +20,7 @@ import (
 // instance URL, so the backend is opt-in via degoog_url.
 type Degoog struct {
 	baseURL string
-	client  *http.Client
+	client  httpx.Doer
 }
 
 // NewDegoog creates a new degoog search backend for the instance at baseURL.
@@ -89,7 +89,7 @@ func (d *Degoog) Search(ctx context.Context, query string, limit int) ([]Result,
 // ProbeDegoog checks a degoog instance with the same /api/search JSON call
 // ketch uses. An unset URL is misconfigured, as for SearXNG: when the backend
 // is selected that blocks doctor, otherwise it is an advisory problem.
-func ProbeDegoog(ctx context.Context, client *http.Client, baseURL string) (health.Status, string) {
+func ProbeDegoog(ctx context.Context, client httpx.Doer, baseURL string) (health.Status, string) {
 	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
 	if baseURL == "" {
 		return health.StatusMisconfigured, "degoog_url not set (ketch config set degoog_url <url>)"
@@ -129,8 +129,11 @@ func degoogProvider() Provider {
 		Name:     "Degoog",
 		Setup:    "degoog: instance URL not set (ketch config set degoog_url http://localhost:4444)",
 		Usable:   func(c *config.Config) bool { return strings.TrimSpace(c.String("degoog_url")) != "" },
-		New:      func(c *config.Config) (Searcher, error) { return NewDegoog(c.String("degoog_url")), nil },
-		Probe: func(ctx context.Context, client *http.Client, c *config.Config) (health.Status, string) {
+		New: func(c *config.Config) (Searcher, error) {
+			client := httpx.WithHeaders(httpx.Default(), c.EffectiveHTTPHeaders("degoog"))
+			return &Degoog{baseURL: strings.TrimRight(strings.TrimSpace(c.String("degoog_url")), "/"), client: client}, nil
+		},
+		Probe: func(ctx context.Context, client httpx.Doer, c *config.Config) (health.Status, string) {
 			return ProbeDegoog(ctx, client, c.String("degoog_url"))
 		},
 	}

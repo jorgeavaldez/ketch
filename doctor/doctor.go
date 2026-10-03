@@ -161,16 +161,19 @@ func summarizeAutoChain(chain []string, checks []Check) (Status, string) {
 func buildSpecs(cfg *config.Config, client *http.Client) []spec {
 	var specs []spec
 	for _, p := range search.Providers() {
-		specs = append(specs, spec{p.MinProbeTimeout, "search", p.ID, p.Required(cfg), func(ctx context.Context) (Status, string) { return p.Probe(ctx, client, cfg) }})
+		probeClient := httpx.WithHeaders(client, cfg.EffectiveHTTPHeaders(p.ID))
+		specs = append(specs, spec{p.MinProbeTimeout, "search", p.ID, p.Required(cfg), func(ctx context.Context) (Status, string) { return p.Probe(ctx, probeClient, cfg) }})
 	}
 	for _, p := range code.Providers() {
-		specs = append(specs, spec{0, "code", p.ID, p.Required(cfg), func(ctx context.Context) (Status, string) { return p.Probe(ctx, client, cfg) }})
+		probeClient := httpx.WithHeaders(client, cfg.EffectiveHTTPHeaders(p.ID))
+		specs = append(specs, spec{0, "code", p.ID, p.Required(cfg), func(ctx context.Context) (Status, string) { return p.Probe(ctx, probeClient, cfg) }})
 	}
 	for _, p := range docs.Providers() {
 		if p.Hidden {
 			continue
 		}
-		specs = append(specs, spec{0, "docs", p.ID, p.Required(cfg), func(ctx context.Context) (Status, string) { return p.Probe(ctx, client, cfg) }})
+		probeClient := httpx.WithHeaders(client, cfg.EffectiveHTTPHeaders(p.ID))
+		specs = append(specs, spec{0, "docs", p.ID, p.Required(cfg), func(ctx context.Context) (Status, string) { return p.Probe(ctx, probeClient, cfg) }})
 	}
 	return append(specs,
 		spec{0, "browser", browserBackendName(cfg.Browser), cfg.Browser != "", func(context.Context) (Status, string) { return checkBrowser(cfg.Browser) }},

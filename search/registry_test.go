@@ -35,7 +35,7 @@ func testProvider(calls *atomic.Int32) search.Provider {
 		Setup:  "registryproof: API key not set",
 		Usable: func(c *config.Config) bool { return len(key.Keys(c)) > 0 },
 		New:    func(*config.Config) (search.Searcher, error) { return registrySearch{}, nil },
-		Probe: func(_ context.Context, _ *http.Client, c *config.Config) (health.Status, string) {
+		Probe: func(_ context.Context, _ httpx.Doer, c *config.Config) (health.Status, string) {
 			calls.Add(1)
 			if len(key.Keys(c)) == 0 {
 				return health.StatusNoKey, "API key not set"

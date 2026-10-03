@@ -34,16 +34,12 @@ const (
 // organic results without any scraping maintenance.
 type SerpBase struct {
 	keys   keyPool
-	client *http.Client
+	client httpx.Doer
 }
 
 // NewSerpBase creates a new SerpBase search backend.
 func NewSerpBase(apiKey string) *SerpBase {
-	return newSerpBaseWithKeys([]string{apiKey})
-}
-
-func newSerpBaseWithKeys(keys []string) *SerpBase {
-	return &SerpBase{keys: newKeyPool(keys), client: httpx.Default()}
+	return &SerpBase{keys: newKeyPool([]string{apiKey}), client: httpx.Default()}
 }
 
 type serpBaseRequest struct {
@@ -205,7 +201,7 @@ func (s *SerpBase) request(ctx context.Context, query, key string) (serpBaseAtte
 }
 
 // ProbeSerpBase checks the provider using a caller-supplied client and endpoint.
-func ProbeSerpBase(ctx context.Context, client *http.Client, endpoint, apiKey string) (health.Status, string) {
+func ProbeSerpBase(ctx context.Context, client httpx.Doer, endpoint, apiKey string) (health.Status, string) {
 	key := strings.TrimSpace(apiKey)
 	if key == "" {
 		return health.StatusNoKey, "API key not set (get a free key at https://serpbase.dev then: ketch config set serpbase_api_key <key>)"
@@ -280,8 +276,11 @@ func serpbaseProvider() Provider {
 		Setup:           "serpbase: API key not set (get a free key at https://serpbase.dev then: ketch config set serpbase_api_key <key>)",
 		Name:            "SerpBase",
 		Usable:          func(c *config.Config) bool { return len(c.SerpBaseKeys()) > 0 },
-		New:             func(c *config.Config) (Searcher, error) { return newSerpBaseWithKeys(c.SerpBaseKeys()), nil },
-		Probe: func(ctx context.Context, client *http.Client, c *config.Config) (health.Status, string) {
+		New: func(c *config.Config) (Searcher, error) {
+			client := httpx.WithHeaders(httpx.Default(), c.EffectiveHTTPHeaders("serpbase"))
+			return &SerpBase{keys: newKeyPool(c.SerpBaseKeys()), client: client}, nil
+		},
+		Probe: func(ctx context.Context, client httpx.Doer, c *config.Config) (health.Status, string) {
 			return health.ProbeKeyPool(c.SerpBaseKeys(), func(key string) (health.Status, string) {
 				return ProbeSerpBase(ctx, client, "https://api.serpbase.dev/google/search", key)
 			})

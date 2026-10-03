@@ -66,6 +66,45 @@ func TestEffectiveKeysReturnCopies(t *testing.T) {
 	}
 }
 
+func TestLoadKeepsLegacyFileFallback(t *testing.T) {
+	for _, tc := range []struct {
+		name, contents string
+	}{
+		{"missing", ""},
+		{"unreadable", ""},
+		{"malformed JSON", `{"limit":`},
+		{"invalid existing option type", `{"limit":"not-a-number"}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			clearKetchEnv(t)
+			path := filepath.Join(t.TempDir(), "config.json")
+			t.Setenv("KETCH_CONFIG", path)
+			if tc.name == "unreadable" {
+				if err := os.Mkdir(path, 0o700); err != nil {
+					t.Fatal(err)
+				}
+			} else if tc.contents != "" {
+				if err := os.WriteFile(path, []byte(tc.contents), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			defaults := Defaults()
+			file := LoadFile()
+			if file.Backend != defaults.Backend || file.Limit != defaults.Limit {
+				t.Fatalf("file fallback changed: backend=%q limit=%d", file.Backend, file.Limit)
+			}
+			t.Setenv("KETCH_LIMIT", "7")
+			loaded, err := Load()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if loaded.Config.Backend != defaults.Backend || loaded.Config.Limit != 7 {
+				t.Fatalf("environment was not applied over defaults: backend=%q limit=%d", loaded.Config.Backend, loaded.Config.Limit)
+			}
+		})
+	}
+}
+
 func TestSaveEnforcesPrivateMode(t *testing.T) {
 	testutil.SetIsolatedConfigHome(t)
 	path, err := Path()

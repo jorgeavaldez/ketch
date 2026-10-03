@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+
+	"github.com/1broseidon/ketch/httpx"
 )
 
 // Status classifies the outcome of a single doctor check.
@@ -90,7 +92,7 @@ func statusPriority(status Status) int {
 	}
 }
 
-func Get(ctx context.Context, client *http.Client, u string, headers map[string]string) (*http.Response, error) {
+func Get(ctx context.Context, client httpx.Doer, u string, headers map[string]string) (*http.Response, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
 		return nil, err
@@ -106,7 +108,7 @@ func Drain(resp *http.Response) {
 	_ = resp.Body.Close()
 }
 
-func ProbeMCP(ctx context.Context, client *http.Client, endpoint, name string) (Status, string) {
+func ProbeMCP(ctx context.Context, client httpx.Doer, endpoint, name string) (Status, string) {
 	body := strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, body)
 	if err != nil {
@@ -127,7 +129,7 @@ func ProbeMCP(ctx context.Context, client *http.Client, endpoint, name string) (
 	return StatusUnreachable, fmt.Sprintf("%s returned status %d", name, resp.StatusCode)
 }
 
-func ProbeReachable(ctx context.Context, client *http.Client, baseURL, name string) (Status, string) {
+func ProbeReachable(ctx context.Context, client httpx.Doer, baseURL, name string) (Status, string) {
 	resp, err := Get(ctx, client, baseURL, nil)
 	if err != nil {
 		return StatusUnreachable, ErrorDetail(err)

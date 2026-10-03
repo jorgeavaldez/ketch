@@ -3,6 +3,7 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
 	"sort"
 	"strconv"
@@ -27,27 +28,29 @@ import (
 // (config → $GITHUB_TOKEN/$GH_TOKEN → gh CLI): it is true iff the source is
 // not "none".
 type configInfo struct {
-	ConfigPath                         string             `json:"config_path" order:"0"`
-	Backend                            string             `json:"backend" order:"1"`
-	Limit                              int                `json:"limit" order:"16"`
-	CacheTTL                           string             `json:"cache_ttl" order:"17"`
-	Browser                            string             `json:"browser,omitempty" order:"18"`
-	CookieFile                         string             `json:"cookie_file,omitempty" order:"19"`
-	UserAgent                          string             `json:"user_agent,omitempty" order:"20"`
-	ExtractMode                        string             `json:"extract_mode" order:"26"` // effective extraction mode: clean (default) or complete
-	CodeBackend                        string             `json:"code_backend" order:"21"`
-	DocsBackend                        string             `json:"docs_backend" order:"22"`
-	URLRewrites                        []urlrewrite.Rule  `json:"url_rewrites,omitempty" order:"27"`
-	SPAMarkers                         []string           `json:"spa_markers,omitempty" order:"28"`
-	MCPTools                           []string           `json:"mcp_tools" order:"29"` // effective set `ketch mcp serve` will publish
-	ExternalPDFToMDConverterCommand    string             `json:"external_pdf_to_md_converter_command,omitempty" order:"30"`
-	ExternalPDFToMDConverterTimeoutSec int                `json:"external_pdf_to_md_converter_timeout_sec" order:"31"`
-	EnvOverrides                       []config.Override  `json:"env_overrides,omitempty" order:"32"`
-	AvailableBackends                  []string           `json:"available_backends" order:"33"`
-	AvailableCodeBackends              []string           `json:"available_code_backends" order:"34"`
-	AvailableDocBackends               []string           `json:"available_doc_backends" order:"35"`
-	ProviderFields                     []configbase.Field `json:"-"`
-	Providers                          map[string]any     `json:"-"`
+	ConfigPath                         string              `json:"config_path" order:"0"`
+	Backend                            string              `json:"backend" order:"1"`
+	Limit                              int                 `json:"limit" order:"16"`
+	CacheTTL                           string              `json:"cache_ttl" order:"17"`
+	Browser                            string              `json:"browser,omitempty" order:"18"`
+	CookieFile                         string              `json:"cookie_file,omitempty" order:"19"`
+	UserAgent                          string              `json:"user_agent,omitempty" order:"20"`
+	ExtractMode                        string              `json:"extract_mode" order:"26"` // effective extraction mode: clean (default) or complete
+	CodeBackend                        string              `json:"code_backend" order:"21"`
+	DocsBackend                        string              `json:"docs_backend" order:"22"`
+	URLRewrites                        []urlrewrite.Rule   `json:"url_rewrites,omitempty" order:"27"`
+	SPAMarkers                         []string            `json:"spa_markers,omitempty" order:"28"`
+	MCPTools                           []string            `json:"mcp_tools" order:"29"` // effective set `ketch mcp serve` will publish
+	ExternalPDFToMDConverterCommand    string              `json:"external_pdf_to_md_converter_command,omitempty" order:"30"`
+	ExternalPDFToMDConverterTimeoutSec int                 `json:"external_pdf_to_md_converter_timeout_sec" order:"31"`
+	HTTPHeaderNames                    []string            `json:"http_header_names,omitempty" order:"32"`
+	ProviderHTTPHeaderNames            map[string][]string `json:"provider_http_header_names,omitempty" order:"33"`
+	EnvOverrides                       []config.Override   `json:"env_overrides,omitempty" order:"34"`
+	AvailableBackends                  []string            `json:"available_backends" order:"35"`
+	AvailableCodeBackends              []string            `json:"available_code_backends" order:"36"`
+	AvailableDocBackends               []string            `json:"available_doc_backends" order:"37"`
+	ProviderFields                     []configbase.Field  `json:"-"`
+	Providers                          map[string]any      `json:"-"`
 }
 
 var configCmd = &cobra.Command{
@@ -96,6 +99,20 @@ func runConfigShow(_ *cobra.Command, _ []string) error {
 }
 
 func buildConfigInfo(c config.Config, path string) configInfo {
+	headerNames := make([]string, 0, len(c.HTTPHeaders))
+	for name := range c.HTTPHeaders {
+		headerNames = append(headerNames, name)
+	}
+	sort.Strings(headerNames)
+	providerHeaderNames := make(map[string][]string, len(c.ProviderHTTPHeaders))
+	for provider, headers := range c.ProviderHTTPHeaders {
+		names := make([]string, 0, len(headers))
+		for name := range headers {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		providerHeaderNames[provider] = names
+	}
 	info := configInfo{
 		ConfigPath:                         path,
 		Backend:                            c.Backend,
@@ -112,6 +129,8 @@ func buildConfigInfo(c config.Config, path string) configInfo {
 		MCPTools:                           effectiveMCPTools(c),
 		ExternalPDFToMDConverterCommand:    c.ExternalPDFToMDConverterCommand,
 		ExternalPDFToMDConverterTimeoutSec: c.ExternalPDFToMDConverterTimeoutSec,
+		HTTPHeaderNames:                    headerNames,
+		ProviderHTTPHeaderNames:            providerHeaderNames,
 		AvailableBackends:                  config.SelectableBackends(),
 		AvailableCodeBackends:              config.AvailableCodeBackends(),
 		AvailableDocBackends:               config.AvailableDocBackends(),
@@ -167,6 +186,9 @@ func runConfigSet(_ *cobra.Command, args []string) error {
 }
 
 func configSetAcknowledgement(c config.Config, key, value string) string {
+	if key == "http_headers" || key == "provider_http_headers" {
+		return fmt.Sprintf("set %s (values redacted)", key)
+	}
 	if count, item, ok := configSecretCount(c, key); ok {
 		if count != 1 {
 			item += "s"
@@ -240,6 +262,26 @@ func applyConfigSet(c *config.Config, key, value string) error {
 		return setUserAgent(c, value)
 	case "extract_mode":
 		return setExtractMode(c, value)
+	case "http_headers":
+		var headers http.Header
+		if err := json.Unmarshal([]byte(value), &headers); err != nil || headers == nil {
+			return exitErrf(ExitValidation, "http_headers must be a JSON object")
+		}
+		c.HTTPHeaders = headers
+		if err := config.ValidateHTTPHeaders(c); err != nil {
+			return exitErrf(ExitValidation, "%w", err)
+		}
+		return nil
+	case "provider_http_headers":
+		var headers map[string]http.Header
+		if err := json.Unmarshal([]byte(value), &headers); err != nil || headers == nil {
+			return exitErrf(ExitValidation, "provider_http_headers must be a JSON object")
+		}
+		c.ProviderHTTPHeaders = headers
+		if err := config.ValidateHTTPHeaders(c); err != nil {
+			return exitErrf(ExitValidation, "%w", err)
+		}
+		return nil
 	case "external_pdf_to_md_converter_command":
 		return setExternalPDFConverterCommand(c, value)
 	case "external_pdf_to_md_converter_timeout_sec":
@@ -455,7 +497,7 @@ func runConfigPath(_ *cobra.Command, _ []string) error {
 }
 
 func validConfigKeys() []string {
-	fields := []configbase.Field{{Name: "backend", Order: 0}, {Name: "limit", Order: 15}, {Name: "cache_ttl", Order: 16}, {Name: "browser", Order: 17}, {Name: "code_backend", Order: 18}, {Name: "docs_backend", Order: 19}, {Name: "url_rewrites", Order: 23}, {Name: "spa_markers", Order: 24}, {Name: "mcp_tools", Order: 25}, {Name: "cookie_file", Order: 26}, {Name: "user_agent", Order: 27}, {Name: "external_pdf_to_md_converter_command", Order: 28}, {Name: "external_pdf_to_md_converter_timeout_sec", Order: 29}, {Name: "extract_mode", Order: 30}}
+	fields := []configbase.Field{{Name: "backend", Order: 0}, {Name: "limit", Order: 15}, {Name: "cache_ttl", Order: 16}, {Name: "browser", Order: 17}, {Name: "code_backend", Order: 18}, {Name: "docs_backend", Order: 19}, {Name: "url_rewrites", Order: 23}, {Name: "spa_markers", Order: 24}, {Name: "mcp_tools", Order: 25}, {Name: "cookie_file", Order: 26}, {Name: "user_agent", Order: 27}, {Name: "external_pdf_to_md_converter_command", Order: 28}, {Name: "external_pdf_to_md_converter_timeout_sec", Order: 29}, {Name: "extract_mode", Order: 30}, {Name: "http_headers", Order: 31}, {Name: "provider_http_headers", Order: 32}}
 	for _, s := range config.ProviderSettings() {
 		fields = append(fields, configbase.Field{Name: s.Key, Order: s.ValidationOrder})
 		if s.Plural != "" {

@@ -3,6 +3,7 @@ package configbase
 
 import (
 	"context"
+	"net/http"
 	"os"
 	"os/exec"
 	"strings"
@@ -14,21 +15,23 @@ import (
 
 // Config holds user-configurable defaults for ketch.
 type Config struct {
-	Backend                            string            `json:"backend" order:"0"`
-	Limit                              int               `json:"limit" order:"15"`
-	CacheTTL                           string            `json:"cache_ttl" order:"16"`
-	Browser                            string            `json:"browser,omitempty" order:"17"` // "chrome", "chromium", or absolute path; empty = disabled
-	CodeBackend                        string            `json:"code_backend,omitempty" order:"18"`
-	DocsBackend                        string            `json:"docs_backend,omitempty" order:"19"`
-	URLRewrites                        []urlrewrite.Rule `json:"url_rewrites,omitempty" order:"23"`
-	SPAMarkers                         []string          `json:"spa_markers,omitempty" order:"24"`
-	MCPTools                           []string          `json:"mcp_tools,omitempty" order:"25"`   // allowlist of tools `ketch mcp serve` publishes; empty = all five
-	CookieFile                         string            `json:"cookie_file,omitempty" order:"26"` // Netscape cookies.txt path; empty = disabled
-	UserAgent                          string            `json:"user_agent,omitempty" order:"27"`  // HTTP User-Agent override; empty = built-in honest default
-	ExternalPDFToMDConverterCommand    string            `json:"external_pdf_to_md_converter_command,omitempty" order:"28"`
-	ExternalPDFToMDConverterTimeoutSec int               `json:"external_pdf_to_md_converter_timeout_sec" order:"29"`
-	ExtractMode                        string            `json:"extract_mode,omitempty" order:"30"` // "clean" (default) or "complete": what extraction may drop; empty = clean
-	ProviderSettings                   map[string]any    `json:"-"`
+	Backend                            string                 `json:"backend" order:"0"`
+	Limit                              int                    `json:"limit" order:"15"`
+	CacheTTL                           string                 `json:"cache_ttl" order:"16"`
+	Browser                            string                 `json:"browser,omitempty" order:"17"` // "chrome", "chromium", or absolute path; empty = disabled
+	CodeBackend                        string                 `json:"code_backend,omitempty" order:"18"`
+	DocsBackend                        string                 `json:"docs_backend,omitempty" order:"19"`
+	URLRewrites                        []urlrewrite.Rule      `json:"url_rewrites,omitempty" order:"23"`
+	SPAMarkers                         []string               `json:"spa_markers,omitempty" order:"24"`
+	MCPTools                           []string               `json:"mcp_tools,omitempty" order:"25"`   // allowlist of tools `ketch mcp serve` publishes; empty = all five
+	CookieFile                         string                 `json:"cookie_file,omitempty" order:"26"` // Netscape cookies.txt path; empty = disabled
+	UserAgent                          string                 `json:"user_agent,omitempty" order:"27"`  // HTTP User-Agent override; empty = built-in honest default
+	ExternalPDFToMDConverterCommand    string                 `json:"external_pdf_to_md_converter_command,omitempty" order:"28"`
+	ExternalPDFToMDConverterTimeoutSec int                    `json:"external_pdf_to_md_converter_timeout_sec" order:"29"`
+	ExtractMode                        string                 `json:"extract_mode,omitempty" order:"30"` // "clean" (default) or "complete": what extraction may drop; empty = clean
+	HTTPHeaders                        http.Header            `json:"http_headers,omitempty" order:"31"`
+	ProviderHTTPHeaders                map[string]http.Header `json:"provider_http_headers,omitempty" order:"32"`
+	ProviderSettings                   map[string]any         `json:"-"`
 	providerSchema                     []Setting
 	providerOrder                      map[string]int
 }
@@ -127,7 +130,15 @@ func runGHAuthToken() (string, error) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, "gh", "auth", "token").Output()
+	command := exec.CommandContext(ctx, "gh", "auth", "token")
+	command.Env = make([]string, 0, len(os.Environ()))
+	for _, entry := range os.Environ() {
+		name, _, _ := strings.Cut(entry, "=")
+		if !strings.EqualFold(name, "KETCH_HTTP_HEADERS") && !strings.EqualFold(name, "KETCH_PROVIDER_HTTP_HEADERS") {
+			command.Env = append(command.Env, entry)
+		}
+	}
+	out, err := command.Output()
 	if err != nil {
 		return "", err
 	}
@@ -170,6 +181,28 @@ const DefaultFirecrawlURL = "https://api.firecrawl.dev"
 // firecrawlSearchPath is appended to the Firecrawl API base to reach the v2
 // search endpoint. See https://docs.firecrawl.dev/api-reference/endpoint/search.
 const firecrawlSearchPath = "/v2/search"
+
+// EffectiveHTTPHeaders returns a fresh merged header set for a provider.
+// Provider values replace global values; empty provider value lists delete keys.
+func (c Config) EffectiveHTTPHeaders(provider string) http.Header {
+	headers := make(http.Header, len(c.HTTPHeaders))
+	for key, values := range c.HTTPHeaders {
+		copyValues := make([]string, len(values))
+		copy(copyValues, values)
+		headers[http.CanonicalHeaderKey(key)] = copyValues
+	}
+	for key, values := range c.ProviderHTTPHeaders[provider] {
+		canonical := http.CanonicalHeaderKey(key)
+		if len(values) == 0 {
+			delete(headers, canonical)
+		} else {
+			copyValues := make([]string, len(values))
+			copy(copyValues, values)
+			headers[canonical] = copyValues
+		}
+	}
+	return headers
+}
 
 // Defaults returns the built-in default configuration.
 

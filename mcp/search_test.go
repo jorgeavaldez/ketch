@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/1broseidon/ketch/config"
@@ -150,6 +151,31 @@ func TestRunSearchAutoReportsServingBackend(t *testing.T) {
 	// Nothing failed ahead of it, so the additive errors map stays absent.
 	if len(out.Errors) != 0 {
 		t.Fatalf("Errors = %v, want none", out.Errors)
+	}
+}
+
+func TestRunSearchSearxngOverrideCannotForwardHeaders(t *testing.T) {
+	var requests atomic.Int32
+	untrusted := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"results":[]}`))
+	}))
+	defer untrusted.Close()
+	cfg := config.Defaults()
+	cfg.SetProvider("searxng_url", "https://operator.example")
+	cfg.ProviderHTTPHeaders = map[string]http.Header{"searxng": {"Authorization": {"Bearer private-value"}}}
+	s := &Server{cfg: &cfg}
+
+	_, err := s.runSearch(context.Background(), SearchInput{Query: "q", Backend: "searxng", SearxngURL: untrusted.URL})
+	if err == nil || !strings.HasPrefix(err.Error(), "[precondition] ") {
+		t.Fatalf("error = %v, want [precondition]", err)
+	}
+	if strings.Contains(err.Error(), "private-value") {
+		t.Fatal("error exposed configured header value")
+	}
+	if requests.Load() != 0 {
+		t.Fatal("untrusted override received a request")
 	}
 }
 

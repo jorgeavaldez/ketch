@@ -23,7 +23,7 @@ const DefaultSearxngURL = "http://localhost:8081"
 // SearXNG searches a SearXNG instance via its JSON API.
 type SearXNG struct {
 	baseURL string
-	client  *http.Client
+	client  httpx.Doer
 }
 
 // NewSearXNG creates a new SearXNG search backend.
@@ -84,7 +84,7 @@ func (s *SearXNG) Search(ctx context.Context, query string, limit int) ([]Result
 }
 
 // ProbeSearxng checks the provider using a caller-supplied client and endpoint.
-func ProbeSearxng(ctx context.Context, client *http.Client, baseURL string) (health.Status, string) {
+func ProbeSearxng(ctx context.Context, client httpx.Doer, baseURL string) (health.Status, string) {
 	if baseURL == "" {
 		return health.StatusMisconfigured, "searxng_url not set (ketch config set searxng_url <url>)"
 	}
@@ -128,8 +128,11 @@ func searxngProvider() Provider {
 			url := strings.TrimSpace(c.String("searxng_url"))
 			return url != "" && url != DefaultSearxngURL
 		},
-		New: func(c *config.Config) (Searcher, error) { return NewSearXNG(c.String("searxng_url")), nil },
-		Probe: func(ctx context.Context, client *http.Client, c *config.Config) (health.Status, string) {
+		New: func(c *config.Config) (Searcher, error) {
+			client := httpx.WithHeaders(httpx.Default(), c.EffectiveHTTPHeaders("searxng"))
+			return &SearXNG{baseURL: c.String("searxng_url"), client: client}, nil
+		},
+		Probe: func(ctx context.Context, client httpx.Doer, c *config.Config) (health.Status, string) {
 			return ProbeSearxng(ctx, client, c.String("searxng_url"))
 		},
 	}

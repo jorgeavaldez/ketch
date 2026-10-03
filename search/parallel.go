@@ -20,7 +20,7 @@ const (
 )
 
 type Parallel struct {
-	client   *http.Client
+	client   httpx.Doer
 	endpoint string
 }
 
@@ -197,8 +197,11 @@ func parallelProvider() Provider {
 		ID:       "parallel",
 		Name:     "Parallel",
 		Usable:   func(*config.Config) bool { return true },
-		New:      func(c *config.Config) (Searcher, error) { return NewParallel(), nil },
-		Probe: func(ctx context.Context, client *http.Client, c *config.Config) (health.Status, string) {
+		New: func(c *config.Config) (Searcher, error) {
+			client := httpx.WithHeaders(httpx.Default(), c.EffectiveHTTPHeaders("parallel"))
+			return &Parallel{client: client, endpoint: parallelEndpoint}, nil
+		},
+		Probe: func(ctx context.Context, client httpx.Doer, c *config.Config) (health.Status, string) {
 			return health.ProbeMCP(ctx, client, "https://search.parallel.ai/mcp", "parallel")
 		},
 	}

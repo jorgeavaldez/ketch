@@ -636,10 +636,11 @@ $ KETCH_CONFIG=/etc/ketch/config.json ketch config
 #### Environment details — Lists, tokens, and what's file-only
 
 - Per-provider key vars accept a comma-separated list and replace the provider's whole key pool — there are no plural `*_API_KEYS` vars.
+- `KETCH_HTTP_HEADERS` and `KETCH_PROVIDER_HTTP_HEADERS` accept JSON objects and replace the corresponding file setting. Header values are treated as secrets: `ketch config`, provenance, and acknowledgements never print them, and browser, PDF-converter, and `gh` subprocesses do not inherit them. Detached ketch crawl workers retain the parent environment, as before.
 - `KETCH_GITHUB_TOKEN` beats the config file, which beats an ambient `$GITHUB_TOKEN`.
 - `url_rewrites` and `spa_markers` are file-only — their JSON and regex values don't survive env quoting.
 - `ketch config` reports an `env_overrides` section, so you can always see which values came from the environment.
-- Invalid values fail loudly, naming the offending variable. Secret `KETCH_*` vars are stripped from spawned subprocesses.
+- Invalid values fail loudly, naming the offending variable. Secret `KETCH_*` vars are stripped from browser and PDF-converter subprocesses.
 
 #### Page cache — bbolt, 72h TTL, single-process
 
@@ -664,15 +665,19 @@ $ ketch browser install                 # download Chromium
 $ ketch browser status
 ```
 
-#### Other keys — Rewrites, SPA markers, user agent, extraction mode, PDF converter
+#### Other keys — Rewrites, headers, SPA markers, user agent, extraction mode, PDF converter
 
 - `url_rewrites` — regex rewrites applied before fetch
 - `spa_markers` — extra tokens for JS-shell detection
 - `cache_ttl` — cache lifetime
 - `user_agent` — User-Agent override for HTTP and browser fetches
+- `http_headers` — default headers on search, code, and docs provider API requests and their doctor probes
+- `provider_http_headers` — per-provider defaults, keyed by provider ID, with the same scope
 - `extract_mode` — `clean` (default) or `complete`; a non-default mode scopes cached pages, so a page cached under one mode is never reused under the other
 - `mcp_tools` — allowlist of MCP tools to publish; unset publishes all six
 - `external_pdf_to_md_converter_command` — external PDF-to-Markdown converter; must contain exactly one `{input}` placeholder. Once set it is authoritative, with no silent fallback
+
+Header defaults can be set with `ketch config set http_headers '{"X-Client":["ketch"]}'` or the equivalent JSON in the config file. A provider's value replaces the global value for the same header; an empty list removes that inherited header. Headers already set by a provider request take precedence, including explicitly empty values. Global headers reach every search/code/docs provider and doctor probe, so use provider-scoped settings for credentials. When custom defaults are active, redirects to a different scheme, hostname, or effective port are not followed. SearXNG URL overrides must also stay on the configured instance's origin when it has effective custom headers; cross-origin overrides are rejected before any request, including under auto, multi, and random search. These settings do not affect scrape/crawl targets or fetched result pages. `ketch config` shows configured header names, never their values.
 
 ## Exit status
 

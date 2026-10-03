@@ -1,6 +1,9 @@
 package search
 
 import (
+	"context"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	config "github.com/1broseidon/ketch/internal/configbase"
@@ -186,6 +189,150 @@ func TestNewFromConfigYoucomIsKeylessByDefault(t *testing.T) {
 			t.Fatalf("pool size = %d, want 2", got)
 		}
 	})
+}
+
+func TestNewFromConfigAppliesProviderHeaders(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("X-Client"); got != "provider" {
+			t.Errorf("X-Client = %q, want provider override", got)
+		}
+		if got := r.Header.Get("X-Global"); got != "global" {
+			t.Errorf("X-Global = %q, want global default", got)
+		}
+		if _, present := r.Header["X-Remove"]; present {
+			t.Errorf("inherited X-Remove was not deleted: %q", r.Header.Get("X-Remove"))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"results":[{"url":"https://example.com/headers","title":"Headers"}]}`))
+	}))
+	defer server.Close()
+
+	cfg := config.Defaults()
+	cfg.SetProvider("searxng_url", server.URL)
+	cfg.HTTPHeaders = http.Header{"X-Client": {"global"}, "X-Global": {"global"}, "X-Remove": {"remove"}}
+	cfg.ProviderHTTPHeaders = map[string]http.Header{"searxng": {"x-client": {"provider"}, "X-Remove": {}}}
+	searcher, err := NewFromConfig(&cfg, "searxng", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	results, err := searcher.Search(context.Background(), "headers", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 || results[0].URL != "https://example.com/headers" {
+		t.Fatalf("results = %#v, want the configured instance's response", results)
+	}
+}
+
+func TestSearxngOverrideRejectsHeaderForwarding(t *testing.T) {
+	for _, mode := range []string{"searxng", "auto", "auto constructor", "multi", "multi all", "random", "random all"} {
+		for _, scope := range []string{"global", "provider"} {
+			t.Run(mode+"/"+scope, func(t *testing.T) {
+				cfg := config.Defaults()
+				cfg.SetProvider("searxng_url", "https://operator.example")
+				headers := http.Header{"Authorization": {"Bearer private-value"}}
+				if scope == "global" {
+					cfg.HTTPHeaders = headers
+				} else {
+					cfg.ProviderHTTPHeaders = map[string]http.Header{"searxng": headers}
+				}
+				const override = "https://untrusted.example"
+				var err error
+				switch mode {
+				case "searxng", "auto":
+					_, err = NewFromConfig(&cfg, mode, override)
+				case "auto constructor":
+					_, err = NewAutoFromConfig(&cfg, override)
+				case "multi":
+					_, err = NewMultiFromConfig(&cfg, []string{"searxng"}, override)
+				case "multi all":
+					_, err = NewMultiFromConfig(&cfg, []string{"all"}, override)
+				case "random":
+					_, err = NewRandomFromConfig(&cfg, []string{"searxng"}, override)
+				case "random all":
+					_, err = NewRandomFromConfig(&cfg, []string{"all"}, override)
+				}
+				if err == nil {
+					t.Fatal("accepted a cross-origin override with configured headers")
+				}
+				if cfg.String("searxng_url") != "https://operator.example" {
+					t.Fatal("override mutated shared configuration")
+				}
+			})
+		}
+	}
+}
+
+func TestSearxngHeaderOverrideOrigins(t *testing.T) {
+	for _, tc := range []struct {
+		name, configured, override string
+		wantError                  bool
+	}{
+		{"unchanged", "https://operator.example", "", false},
+		{"same origin", "https://operator.example", "https://operator.example/other", false},
+		{"default HTTPS port", "https://operator.example:443", "https://OPERATOR.example/other", false},
+		{"default HTTP port", "http://operator.example:80", "http://operator.example/other", false},
+		{"different host", "https://operator.example", "https://untrusted.example", true},
+		{"different port", "https://operator.example", "https://operator.example:8443", true},
+		{"downgrade", "https://operator.example", "http://operator.example", true},
+		{"relative override", "https://operator.example", "/other", true},
+		{"malformed override", "https://operator.example", "https://operator.example:bad", true},
+		{"no configured origin", "", "https://untrusted.example", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := config.Defaults()
+			cfg.SetProvider("searxng_url", tc.configured)
+			cfg.HTTPHeaders = http.Header{"Authorization": {"Bearer private-value"}}
+			_, err := NewFromConfig(&cfg, "searxng", tc.override)
+			if (err != nil) != tc.wantError {
+				t.Fatalf("error = %v, wantError = %t", err, tc.wantError)
+			}
+		})
+	}
+}
+
+func TestSearxngOverrideWithoutEffectiveHeaders(t *testing.T) {
+	for _, deleted := range []bool{false, true} {
+		cfg := config.Defaults()
+		cfg.SetProvider("searxng_url", "https://operator.example")
+		if deleted {
+			cfg.HTTPHeaders = http.Header{"Authorization": {"Bearer private-value"}}
+			cfg.ProviderHTTPHeaders = map[string]http.Header{"searxng": {"Authorization": {}}}
+		}
+		if _, err := NewFromConfig(&cfg, "searxng", "https://other.example"); err != nil {
+			t.Fatalf("override without effective headers: %v", err)
+		}
+	}
+}
+
+func TestSearxngSameOriginOverrideSendsHeaders(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/other/search" || r.Header.Get("X-Client") != "configured" {
+			t.Errorf("path/header = %q/%q", r.URL.Path, r.Header.Get("X-Client"))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"results":[{"url":"https://example.com/headers","title":"Headers"}]}`))
+	}))
+	defer server.Close()
+	for _, backend := range []string{"searxng", "auto"} {
+		cfg := config.Defaults()
+		cfg.SetProvider("searxng_url", server.URL)
+		cfg.ProviderHTTPHeaders = map[string]http.Header{"searxng": {"X-Client": {"configured"}}}
+		searcher, err := NewFromConfig(&cfg, backend, server.URL+"/other")
+		if err != nil {
+			t.Fatal(err)
+		}
+		results, err := searcher.Search(context.Background(), "q", 1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(results) != 1 || results[0].URL != "https://example.com/headers" {
+			t.Fatalf("%s results = %#v, want the overridden instance's response", backend, results)
+		}
+		if cfg.String("searxng_url") != server.URL {
+			t.Fatal("override mutated shared configuration")
+		}
+	}
 }
 
 func TestNewFromConfigFirecrawlURL(t *testing.T) {

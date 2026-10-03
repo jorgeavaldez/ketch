@@ -33,19 +33,16 @@ const keenableSnippetMaxChars = 500
 // the hourly cap and switches to the authenticated endpoint.
 type Keenable struct {
 	keys   keyPool
-	client *http.Client
+	client httpx.Doer
 }
 
 // NewKeenable creates a new Keenable search backend. A nil or blank apiKey uses
 // the keyless public endpoint.
 func NewKeenable(apiKey *string) *Keenable {
-	if apiKey == nil {
-		return newKeenableWithKeys(nil)
+	var keys []string
+	if apiKey != nil {
+		keys = []string{*apiKey}
 	}
-	return newKeenableWithKeys([]string{*apiKey})
-}
-
-func newKeenableWithKeys(keys []string) *Keenable {
 	return &Keenable{keys: newKeyPool(keys), client: httpx.Default()}
 }
 
@@ -164,7 +161,7 @@ func keenableStatusError(resp *http.Response) error {
 }
 
 // ProbeKeenable checks the provider using a caller-supplied client and endpoint.
-func ProbeKeenable(ctx context.Context, client *http.Client, base, apiKey string) (health.Status, string) {
+func ProbeKeenable(ctx context.Context, client httpx.Doer, base, apiKey string) (health.Status, string) {
 	key := strings.TrimSpace(apiKey)
 	path := "/v1/search/public"
 	if key != "" {
@@ -206,8 +203,11 @@ func keenableProvider() Provider {
 		ID:       "keenable",
 		Name:     "Keenable",
 		Usable:   func(*config.Config) bool { return true },
-		New:      func(c *config.Config) (Searcher, error) { return newKeenableWithKeys(c.KeenableKeys()), nil },
-		Probe: func(ctx context.Context, client *http.Client, c *config.Config) (health.Status, string) {
+		New: func(c *config.Config) (Searcher, error) {
+			client := httpx.WithHeaders(httpx.Default(), c.EffectiveHTTPHeaders("keenable"))
+			return &Keenable{keys: newKeyPool(c.KeenableKeys()), client: client}, nil
+		},
+		Probe: func(ctx context.Context, client httpx.Doer, c *config.Config) (health.Status, string) {
 			return health.ProbeKeyPool(c.KeenableKeys(), func(key string) (health.Status, string) {
 				return ProbeKeenable(ctx, client, "https://api.keenable.ai", key)
 			})

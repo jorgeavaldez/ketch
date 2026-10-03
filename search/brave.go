@@ -17,16 +17,12 @@ import (
 // Brave searches via the Brave Search API.
 type Brave struct {
 	keys   keyPool
-	client *http.Client
+	client httpx.Doer
 }
 
 // NewBrave creates a new Brave search backend.
 func NewBrave(apiKey string) *Brave {
-	return newBraveWithKeys([]string{apiKey})
-}
-
-func newBraveWithKeys(keys []string) *Brave {
-	return &Brave{keys: newKeyPool(keys), client: httpx.Default()}
+	return &Brave{keys: newKeyPool([]string{apiKey}), client: httpx.Default()}
 }
 
 type braveResponse struct {
@@ -130,7 +126,7 @@ func braveStatusError(resp *http.Response) error {
 }
 
 // ProbeBrave checks the provider using a caller-supplied client and endpoint.
-func ProbeBrave(ctx context.Context, client *http.Client, endpoint, apiKey string) (health.Status, string) {
+func ProbeBrave(ctx context.Context, client httpx.Doer, endpoint, apiKey string) (health.Status, string) {
 	if apiKey == "" {
 		return health.StatusNoKey, "API key not set (get one free at https://brave.com/search/api/ then: ketch config set brave_api_key <key>)"
 	}
@@ -163,8 +159,11 @@ func braveProvider() Provider {
 		Setup:    "brave: API key not set (get one free at https://brave.com/search/api/ then: ketch config set brave_api_key <key>)",
 		Name:     "Brave",
 		Usable:   func(c *config.Config) bool { return len(c.BraveKeys()) > 0 },
-		New:      func(c *config.Config) (Searcher, error) { return newBraveWithKeys(c.BraveKeys()), nil },
-		Probe: func(ctx context.Context, client *http.Client, c *config.Config) (health.Status, string) {
+		New: func(c *config.Config) (Searcher, error) {
+			client := httpx.WithHeaders(httpx.Default(), c.EffectiveHTTPHeaders("brave"))
+			return &Brave{keys: newKeyPool(c.BraveKeys()), client: client}, nil
+		},
+		Probe: func(ctx context.Context, client httpx.Doer, c *config.Config) (health.Status, string) {
 			return health.ProbeKeyPool(c.BraveKeys(), func(key string) (health.Status, string) {
 				return ProbeBrave(ctx, client, "https://api.search.brave.com/res/v1/web/search", key)
 			})

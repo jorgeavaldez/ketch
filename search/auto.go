@@ -98,8 +98,8 @@ func AutoChainNames(cfg *config.Config) []string {
 // override is applied to a copy, preserving the shared configuration.
 func NewAutoFromConfig(cfg *config.Config, searxngURL string) (*Auto, error) {
 	c := *cfg
-	if searxngURL != "" {
-		c.SetProvider("searxng_url", searxngURL)
+	if err := applySearxngOverride(&c, searxngURL); err != nil {
+		return nil, err
 	}
 
 	chain := AutoChain(&c)

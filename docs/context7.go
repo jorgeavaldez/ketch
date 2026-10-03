@@ -16,7 +16,7 @@ import (
 // Context7 searches library documentation via the Context7 API.
 type Context7 struct {
 	apiKey string
-	client *http.Client
+	client httpx.Doer
 }
 
 // NewContext7 creates a new Context7 docs backend.
@@ -212,7 +212,7 @@ func (c *Context7) GetDocs(ctx context.Context, libraryID, query string, tokens 
 }
 
 // ProbeContext7 checks the provider using a caller-supplied client and endpoint.
-func ProbeContext7(ctx context.Context, client *http.Client, apiBase, apiKey string) (health.Status, string) {
+func ProbeContext7(ctx context.Context, client httpx.Doer, apiBase, apiKey string) (health.Status, string) {
 	if apiKey == "" {
 		return health.StatusNoKey, "API key not set (get one then: ketch config set context7_api_key <key>)"
 	}
@@ -240,8 +240,11 @@ func context7Provider() Provider {
 		ID:       "context7",
 		Name:     "Context7",
 		Usable:   func(c *config.Config) bool { return c.String("context7_api_key") != "" },
-		New:      func(c *config.Config) (Searcher, error) { return NewContext7(c.String("context7_api_key")), nil },
-		Probe: func(ctx context.Context, client *http.Client, c *config.Config) (health.Status, string) {
+		New: func(c *config.Config) (Searcher, error) {
+			client := httpx.WithHeaders(httpx.Default(), c.EffectiveHTTPHeaders("context7"))
+			return &Context7{apiKey: c.String("context7_api_key"), client: client}, nil
+		},
+		Probe: func(ctx context.Context, client httpx.Doer, c *config.Config) (health.Status, string) {
 			return ProbeContext7(ctx, client, "https://context7.com", c.String("context7_api_key"))
 		},
 	}

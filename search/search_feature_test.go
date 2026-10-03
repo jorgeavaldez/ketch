@@ -9,6 +9,8 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+
+	config "github.com/1broseidon/ketch/internal/configbase"
 )
 
 func TestFeatureBraveSearchParses(t *testing.T) {
@@ -587,29 +589,54 @@ func TestFeatureFirecrawlHostedKeylessOmitsAuthorization(t *testing.T) {
 
 func TestFeatureFirecrawlSelfHostedEndpoint(t *testing.T) {
 	t.Parallel()
-	var gotPath string
-	var gotAuth string
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotPath = r.URL.Path
-		gotAuth = r.Header.Get("Authorization")
-		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"success":true,"data":{"web":[{"url":"https://example.com","title":"Ex","description":"d"}]}}`)
-	}))
-	defer server.Close()
+	for _, tc := range []struct {
+		name, key string
+	}{
+		{"keyless", ""},
+		{"keyed", "native-key"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodPost || r.URL.Path != "/v2/search" {
+					t.Errorf("request = %s %s, want POST /v2/search", r.Method, r.URL.Path)
+				}
+				if r.Header.Get("CF-Access-Client-Id") != "instance-id" || r.Header.Get("CF-Access-Client-Secret") != "instance-secret" {
+					t.Error("Cloudflare service-auth headers missing")
+				}
+				wantAuth := ""
+				if tc.key != "" {
+					wantAuth = "Bearer " + tc.key
+				}
+				if r.Header.Get("Authorization") != wantAuth || r.Header.Get("Content-Type") != "application/json" {
+					t.Error("configured defaults changed Firecrawl's native request headers")
+				}
+				w.Header().Set("Content-Type", "application/json")
+				fmt.Fprint(w, `{"success":true,"data":{"web":[{"url":"https://example.com","title":"Ex","description":"d"}]}}`)
+			}))
+			defer server.Close()
 
-	f := newFirecrawlWithKeys(nil, server.URL)
-	results, err := f.Search(context.Background(), "q", 1)
-	if err != nil {
-		t.Fatalf("Search error: %v", err)
-	}
-	if len(results) != 1 {
-		t.Fatalf("got %d results, want 1", len(results))
-	}
-	if gotPath != "/v2/search" {
-		t.Errorf("path = %q, want /v2/search", gotPath)
-	}
-	if gotAuth != "" {
-		t.Errorf("Authorization = %q, want empty for keyless self-host", gotAuth)
+			cfg := config.Defaults()
+			cfg.SetProvider("firecrawl_url", server.URL+"/")
+			cfg.SetProvider("firecrawl_api_key", tc.key)
+			cfg.HTTPHeaders = http.Header{"CF-Access-Client-Id": {"global-id"}, "Content-Type": {"text/plain"}}
+			if tc.key != "" {
+				cfg.HTTPHeaders.Set("Authorization", "Bearer ignored-default")
+			}
+			cfg.ProviderHTTPHeaders = map[string]http.Header{
+				"firecrawl": {"CF-Access-Client-Id": {"instance-id"}, "CF-Access-Client-Secret": {"instance-secret"}},
+			}
+			f, err := NewFromConfig(&cfg, "firecrawl", "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			results, err := f.Search(context.Background(), "q", 1)
+			if err != nil {
+				t.Fatalf("Search error: %v", err)
+			}
+			if len(results) != 1 || results[0].URL != "https://example.com" {
+				t.Fatalf("results = %#v, want the self-hosted response", results)
+			}
+		})
 	}
 }
 
