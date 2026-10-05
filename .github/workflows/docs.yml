@@ -23,6 +23,8 @@ concurrency:
 
 jobs:
   build:
+    # ketch.run belongs to upstream; forks only need binary releases.
+    if: ${{ github.repository == '1broseidon/ketch' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7

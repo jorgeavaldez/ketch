@@ -88,9 +88,10 @@ jobs:
 
   npm:
     needs: [ref, release]
+    # Only upstream publishes the ketch-cli npm packages; forks release binaries only.
     # Runs after a successful GoReleaser job, or on its own for an existing
     # release when npm_only is set (the release job is then skipped, not failed).
-    if: ${{ always() && needs.ref.result == 'success' && (needs.release.result == 'success' || (inputs.npm_only && needs.release.result == 'skipped')) }}
+    if: ${{ always() && github.repository == '1broseidon/ketch' && needs.ref.result == 'success' && (needs.release.result == 'success' || (inputs.npm_only && needs.release.result == 'skipped')) }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
